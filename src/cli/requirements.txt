@@ -4,3 +4,11 @@ azure-identity>=1.15.0
 azure-storage-blob>=12.19.0
 requests>=2.31.0
 rich>=13.7.0
+
+# Additional dependencies for Phase 2
+responses>=0.24.0        # HTTP mocking for tests
+pytest>=8.0.0           # Testing framework
+pytest-cov>=4.1.0       # Coverage reporting
+pytest-mock>=3.12.0     # Mocking utilities
+tomli>=2.0.0; python_version < "3.11"  # TOML parsing for older Python
+typing-extensions>=4.0.0  # Type hints compatibility
