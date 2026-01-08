@@ -20,6 +20,7 @@ const (
 	DefaultReadySignal         = "/dev/shm/weights/ready.signal"
 	DefaultRuntimeURL          = "http://127.0.0.1:8081"
 	DefaultPublicAddr          = "0.0.0.0:8000"
+	DefaultHealthAddr          = "0.0.0.0:8001"
 	DefaultDownloadConcurrency = 4
 	DefaultDownloadChunkBytes  = 8388608 // 8MB
 	DefaultLogLevel            = "info"
@@ -54,6 +55,7 @@ type Config struct {
 	// URLs with defaults
 	RuntimeURL string // TB_RUNTIME_URL - Runtime inference server URL
 	PublicAddr string // TB_PUBLIC_ADDR - Public address to bind sentinel
+	HealthAddr string // TB_HEALTH_ADDR - Health endpoint address
 
 	// Download configuration
 	DownloadConcurrency int // TB_DOWNLOAD_CONCURRENCY - Number of concurrent download workers
@@ -108,6 +110,7 @@ func Load() (*Config, error) {
 		ReadySignal: getEnv("TB_READY_SIGNAL", DefaultReadySignal),
 		RuntimeURL:  getEnv("TB_RUNTIME_URL", DefaultRuntimeURL),
 		PublicAddr:  getEnv("TB_PUBLIC_ADDR", DefaultPublicAddr),
+		HealthAddr:  getEnv("TB_HEALTH_ADDR", DefaultHealthAddr),
 		LogLevel:    strings.ToLower(getEnv("TB_LOG_LEVEL", DefaultLogLevel)),
 	}
 
@@ -237,7 +240,7 @@ func (c *Config) Validate() []error {
 // Sensitive values are redacted.
 func (c *Config) String() string {
 	return fmt.Sprintf(
-		"Config{ContractID=%q, AssetID=%q, EDCEndpoint=%q, TargetDir=%q, PipePath=%q, ReadySignal=%q, RuntimeURL=%q, PublicAddr=%q, DownloadConcurrency=%d, DownloadChunkBytes=%d, LogLevel=%q}",
+		"Config{ContractID=%q, AssetID=%q, EDCEndpoint=%q, TargetDir=%q, PipePath=%q, ReadySignal=%q, RuntimeURL=%q, PublicAddr=%q, HealthAddr=%q, DownloadConcurrency=%d, DownloadChunkBytes=%d, LogLevel=%q}",
 		c.ContractID,
 		c.AssetID,
 		c.EDCEndpoint,
@@ -246,6 +249,7 @@ func (c *Config) String() string {
 		c.ReadySignal,
 		c.RuntimeURL,
 		c.PublicAddr,
+		c.HealthAddr,
 		c.DownloadConcurrency,
 		c.DownloadChunkBytes,
 		c.LogLevel,

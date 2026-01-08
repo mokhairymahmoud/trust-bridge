@@ -73,9 +73,21 @@ This is the expected folder structure for implementation.
   - `internal/billing/` (metering client)
   - `internal/health/` (readiness/liveness)
   - `internal/state/` (state machine orchestration)
+  - `internal/finetune/` (QLoRA fine-tuning - Phase 15)
+    - `types.go` (data structures)
+    - `adapter.go` (adapter CRUD)
+    - `storage.go` (filesystem storage)
+    - `manager.go` (job management)
+    - `api.go` (HTTP handlers)
+    - `data.go` (training data management)
+    - `runtime.go` (adapter activation)
 - `src/runtime/`
   - `entrypoint.sh` (waits for weights-ready signal)
   - `Dockerfile.runtime` (optional wrapper if needed)
+  - `finetune/` (QLoRA training worker - Phase 15)
+    - `Dockerfile.finetune`
+    - `train.py`
+    - `requirements.txt`
 - `src/cli/` (Python 3.10+, Typer)
   - `trustbridge_cli/__init__.py`
   - `trustbridge_cli/main.py` (Typer app)
@@ -116,6 +128,21 @@ This is the expected folder structure for implementation.
 - `TB_DOWNLOAD_CONCURRENCY` (int, default `4`)
 - `TB_DOWNLOAD_CHUNK_BYTES` (int, default `8388608` = 8MiB)
 - `TB_LOG_LEVEL` (string, default `info`)
+
+#### Fine-tuning variables (Phase 15)
+
+- `TB_FINETUNE_ENABLED` (bool, default `false`) – enable fine-tuning feature
+- `TB_ADAPTERS_DIR` (string, default `/mnt/adapters`) – adapter storage path
+- `TB_TRAINING_DATA_DIR` (string, default `/mnt/training`) – training data upload path
+- `TB_MAX_ADAPTERS` (int, default `10`) – max adapters per deployment
+- `TB_MAX_TRAINING_DATA_GB` (int, default `50`) – max training data size
+- `TB_MAX_CONCURRENT_JOBS` (int, default `1`) – max concurrent training jobs
+- `TB_DEFAULT_LORA_R` (int, default `16`) – default LoRA rank
+- `TB_DEFAULT_LORA_ALPHA` (int, default `32`) – default LoRA alpha
+- `TB_DEFAULT_EPOCHS` (int, default `3`) – default training epochs
+- `TB_DEFAULT_BATCH_SIZE` (int, default `4`) – default batch size
+- `TB_MAX_LORAS` (int, default `4`) – max LoRA adapters loaded in runtime
+- `TB_MAX_LORA_RANK` (int, default `64`) – max LoRA rank supported
 
 ### 3.2 Runtime container
 
@@ -234,9 +261,12 @@ Required fields:
   "plaintext_bytes": 53821440000,
   "sha256_ciphertext": "...",
   "asset_id": "tb-asset-123",
-  "weights_filename": "model.tbenc"
+  "weights_filename": "model.tbenc",
+  "allow_finetune": true
 }
 ```
+
+Note: `allow_finetune` (Phase 15) controls whether consumers can fine-tune this model. Default is `true`.
 
 Integrity checks required by sentinel:
 
@@ -1046,9 +1076,293 @@ This section provides a detailed, step-by-step implementation plan that covers a
 
 ---
 
+### Phase 15: QLoRA Fine-Tuning on Consumer Side (Days 46-60)
+
+**Goal**: Enable consumers to fine-tune deployed models using QLoRA while maintaining security guarantees.
+
+#### 15.1 Design Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Adapter Export** | No - in-system only | Adapters stay within TrustBridge deployment |
+| **Compute Model** | Same GPU (time-sharing) | Simpler, lower cost - inference pauses during training |
+| **Provider Control** | Yes - providers can disable | `allow_finetune: false` in asset metadata |
+| **Quantization** | QLoRA 4-bit only | Maximum memory efficiency |
+| **Training Data Format** | JSONL | Standard format for instruction tuning |
+
+#### 15.2 New Repository Structure
+
+```
+src/
+├── sentinel/
+│   └── internal/
+│       └── finetune/           # NEW: Fine-tuning orchestration
+│           ├── types.go        # Data structures
+│           ├── adapter.go      # Adapter CRUD operations
+│           ├── storage.go      # Filesystem adapter storage
+│           ├── manager.go      # Job queue management
+│           ├── api.go          # HTTP handlers
+│           └── errors.go       # Fine-tuning errors
+│
+├── runtime/
+│   └── finetune/               # NEW: Fine-tuning worker
+│       ├── Dockerfile.finetune # Training container
+│       ├── train.py            # QLoRA training script
+│       └── requirements.txt    # Python dependencies
+```
+
+#### 15.3 New Environment Variables
+
+```bash
+# Feature flag
+TB_FINETUNE_ENABLED=true
+
+# Storage paths
+TB_ADAPTERS_DIR=/mnt/adapters
+TB_TRAINING_DATA_DIR=/mnt/training
+
+# Limits
+TB_MAX_ADAPTERS=10
+TB_MAX_TRAINING_DATA_GB=50
+TB_MAX_CONCURRENT_JOBS=1
+
+# Training defaults
+TB_DEFAULT_LORA_R=16
+TB_DEFAULT_LORA_ALPHA=32
+TB_DEFAULT_EPOCHS=3
+TB_DEFAULT_BATCH_SIZE=4
+
+# Runtime LoRA config
+TB_MAX_LORAS=4
+TB_MAX_LORA_RANK=64
+```
+
+#### 15.4 API Endpoints
+
+```
+POST   /v1/finetune/jobs              # Create fine-tuning job
+GET    /v1/finetune/jobs              # List jobs
+GET    /v1/finetune/jobs/{id}         # Get job status
+DELETE /v1/finetune/jobs/{id}         # Cancel job
+
+POST   /v1/finetune/data              # Upload training data (JSONL)
+GET    /v1/finetune/data              # List training datasets
+DELETE /v1/finetune/data/{id}         # Delete training data
+
+GET    /v1/adapters                   # List adapters
+GET    /v1/adapters/{id}              # Get adapter details (metadata only)
+DELETE /v1/adapters/{id}              # Delete adapter
+POST   /v1/adapters/{id}/activate     # Load adapter into runtime
+POST   /v1/adapters/{id}/deactivate   # Unload adapter
+```
+
+#### 15.5 Implementation Tasks
+
+59. **Add `allow_finetune` to provider manifest**
+    - File: `src/cli/trustbridge_cli/commands/encrypt.py`
+    - Add `--allow-finetune` flag (default: true)
+    - Include in manifest JSON: `"allow_finetune": true`
+    - Update manifest parsing in sentinel
+
+60. **Implement adapter data types**
+    - File: `src/sentinel/internal/finetune/types.go`
+    - Structures:
+      - `AdapterManifest`: adapter_id, base_asset_id, lora_config, training_config, metrics, files, sha256
+      - `LoRAConfig`: r, lora_alpha, target_modules, lora_dropout
+      - `TrainingConfig`: epochs, learning_rate, batch_size, warmup_steps, max_seq_length
+      - `Job`: id, status, training_data_id, config, created_at, completed_at, error
+      - `TrainingDataset`: id, filename, size_bytes, samples, uploaded_at
+
+61. **Implement adapter storage**
+    - File: `src/sentinel/internal/finetune/storage.go`
+    - Functions:
+      - `NewAdapterStore(basePath string) *AdapterStore`
+      - `Save(adapter *AdapterManifest) error`
+      - `Load(adapterID string) (*AdapterManifest, error)`
+      - `List() ([]*AdapterManifest, error)`
+      - `Delete(adapterID string) error`
+    - Storage format: `{TB_ADAPTERS_DIR}/{adapter_id}/adapter_manifest.json`
+
+62. **Implement adapter CRUD operations**
+    - File: `src/sentinel/internal/finetune/adapter.go`
+    - Functions:
+      - `CreateAdapter(manifest *AdapterManifest) error`
+      - `GetAdapter(id string) (*AdapterManifest, error)`
+      - `ListAdapters() ([]*AdapterManifest, error)`
+      - `DeleteAdapter(id string) error`
+      - `ValidateAdapter(path string) error`
+
+63. **Implement fine-tuning job manager**
+    - File: `src/sentinel/internal/finetune/manager.go`
+    - Functions:
+      - `NewManager(config *Config, manifest *asset.Manifest) *Manager`
+      - `CreateJob(req *JobRequest) (*Job, error)` - validates provider allows fine-tuning
+      - `GetJob(id string) (*Job, error)`
+      - `ListJobs() ([]*Job, error)`
+      - `CancelJob(id string) error`
+      - `ExecuteJob(job *Job) error` - launches training worker
+    - Job queue: in-memory with persistence to disk
+    - Max concurrent jobs: 1 (same GPU as inference)
+
+64. **Implement training data management**
+    - File: `src/sentinel/internal/finetune/data.go`
+    - Functions:
+      - `UploadTrainingData(filename string, reader io.Reader) (*TrainingDataset, error)`
+      - `ValidateJSONL(path string) (int, error)` - returns sample count
+      - `GetTrainingData(id string) (*TrainingDataset, error)`
+      - `ListTrainingData() ([]*TrainingDataset, error)`
+      - `DeleteTrainingData(id string) error`
+    - Storage: `{TB_TRAINING_DATA_DIR}/{data_id}/data.jsonl`
+    - Size limit: `TB_MAX_TRAINING_DATA_GB`
+
+65. **Implement fine-tuning HTTP API**
+    - File: `src/sentinel/internal/finetune/api.go`
+    - Handlers:
+      - `HandleCreateJob(w, r)` - POST /v1/finetune/jobs
+      - `HandleListJobs(w, r)` - GET /v1/finetune/jobs
+      - `HandleGetJob(w, r)` - GET /v1/finetune/jobs/{id}
+      - `HandleCancelJob(w, r)` - DELETE /v1/finetune/jobs/{id}
+      - `HandleUploadData(w, r)` - POST /v1/finetune/data (multipart)
+      - `HandleListData(w, r)` - GET /v1/finetune/data
+      - `HandleDeleteData(w, r)` - DELETE /v1/finetune/data/{id}
+      - `HandleListAdapters(w, r)` - GET /v1/adapters
+      - `HandleGetAdapter(w, r)` - GET /v1/adapters/{id}
+      - `HandleDeleteAdapter(w, r)` - DELETE /v1/adapters/{id}
+      - `HandleActivateAdapter(w, r)` - POST /v1/adapters/{id}/activate
+      - `HandleDeactivateAdapter(w, r)` - POST /v1/adapters/{id}/deactivate
+
+66. **Add Training state to state machine**
+    - File: `src/sentinel/internal/state/machine.go`
+    - Add state: `StateTraining`
+    - Transitions:
+      - `Ready → Training`: on job start
+      - `Training → Ready`: on job complete/cancel
+    - Behavior in Training state:
+      - Inference requests return 503 "Training in progress"
+      - Health endpoint returns state info
+
+67. **Integrate fine-tuning routes into proxy**
+    - File: `src/sentinel/internal/proxy/proxy.go`
+    - Route `/v1/finetune/*` to fine-tuning API handlers
+    - Route `/v1/adapters/*` to adapter API handlers
+    - Only route when `TB_FINETUNE_ENABLED=true`
+
+68. **Create QLoRA training worker Dockerfile**
+    - File: `src/runtime/finetune/Dockerfile.finetune`
+    ```dockerfile
+    FROM nvcr.io/nvidia/pytorch:24.01-py3
+    RUN pip install peft transformers datasets accelerate bitsandbytes
+    COPY train.py /app/train.py
+    COPY requirements.txt /app/requirements.txt
+    WORKDIR /app
+    ENTRYPOINT ["python", "train.py"]
+    ```
+
+69. **Implement QLoRA training script**
+    - File: `src/runtime/finetune/train.py`
+    - Features:
+      - Load base model from vLLM runtime API (not from disk)
+      - Apply 4-bit quantization (BitsAndBytes NF4)
+      - Configure LoRA: r, alpha, target_modules, dropout
+      - Train on JSONL dataset (instruction/input/output format)
+      - Save adapter to output directory
+      - Report progress to sentinel via callback URL
+    - QLoRA config (hardcoded):
+      ```python
+      bnb_config = BitsAndBytesConfig(
+          load_in_4bit=True,
+          bnb_4bit_quant_type="nf4",
+          bnb_4bit_compute_dtype=torch.bfloat16,
+          bnb_4bit_use_double_quant=True,
+      )
+      ```
+
+70. **Update runtime entrypoint for LoRA support**
+    - File: `src/runtime/entrypoint.sh`
+    - Add vLLM LoRA flags:
+      ```bash
+      exec vllm serve \
+        --model "$TB_PIPE_PATH" \
+        --host 127.0.0.1 \
+        --port 8081 \
+        --enable-lora \
+        --max-loras $TB_MAX_LORAS \
+        --max-lora-rank $TB_MAX_LORA_RANK
+      ```
+
+71. **Implement adapter activation in runtime**
+    - File: `src/sentinel/internal/finetune/runtime.go`
+    - Functions:
+      - `ActivateAdapter(adapterID string) error` - calls vLLM load_lora_adapter API
+      - `DeactivateAdapter(adapterID string) error` - calls vLLM unload API
+      - `GetActiveAdapters() ([]string, error)`
+    - vLLM API: `POST http://127.0.0.1:8081/v1/load_lora_adapter`
+
+72. **Add fine-tuning configuration to sentinel config**
+    - File: `src/sentinel/internal/config/config.go`
+    - Add fields:
+      - `FineTuneEnabled bool`
+      - `AdaptersDir string`
+      - `TrainingDataDir string`
+      - `MaxAdapters int`
+      - `MaxTrainingDataGB int`
+      - `MaxConcurrentJobs int`
+      - `DefaultLoRAR int`
+      - `DefaultLoRAAlpha int`
+      - `DefaultEpochs int`
+      - `DefaultBatchSize int`
+      - `MaxLoRAs int`
+      - `MaxLoRARank int`
+    - Validation: directories must be writable
+
+73. **Add fine-tuning metrics to billing**
+    - File: `src/sentinel/internal/billing/counter.go`
+    - Add fields:
+      - `FineTuningJobs int64`
+      - `FineTuningGPUMinutes int64`
+      - `TrainingTokens int64`
+    - Track job duration and report to metering API
+
+74. **Implement fine-tuning E2E tests**
+    - File: `e2e/tests/test_finetune.py`
+    - Tests:
+      - `test_finetune_creates_adapter`: Submit job, verify adapter created
+      - `test_finetune_blocked_when_disabled`: Provider sets allow_finetune=false, verify 403
+      - `test_inference_blocked_during_training`: Submit job, verify inference returns 503
+      - `test_adapter_persists_across_restart`: Create adapter, restart, verify loadable
+      - `test_adapter_activation`: Activate adapter, verify inference uses it
+      - `test_invalid_training_data_rejected`: Upload malformed JSONL, verify error
+
+75. **Update docker-compose for fine-tuning**
+    - File: `e2e/docker-compose.yml`
+    - Add volumes:
+      - `./adapters:/mnt/adapters`
+      - `./training-data:/mnt/training`
+    - Add environment variables for fine-tuning
+    - Add training worker service (on-demand)
+
+76. **Security audit for fine-tuning**
+    - Checklist:
+      - [ ] Training worker cannot access `TB_PIPE_PATH` directly
+      - [ ] Training worker accesses base model only through runtime API
+      - [ ] Adapters cannot be downloaded/exported
+      - [ ] Training data isolated from model artifacts
+      - [ ] Job creation validates provider `allow_finetune` flag
+      - [ ] No adapter data in audit logs
+
+**Acceptance**:
+- Consumer can upload training data and create fine-tuning job
+- Training completes and adapter is saved
+- Adapter can be activated and used for inference
+- Provider can disable fine-tuning per-asset
+- Inference blocked during training (503)
+- All security invariants maintained
+
+---
+
 ## Summary
 
-This implementation plan covers **58 discrete, actionable tasks** organized into **14 phases** spanning approximately **6-9 weeks** of engineering effort (assuming 1-2 engineers).
+This implementation plan covers **76 discrete, actionable tasks** organized into **15 phases** spanning approximately **8-12 weeks** of engineering effort (assuming 1-2 engineers).
 
 **Key milestones**:
 - **End of Phase 1**: Crypto interop proven
@@ -1057,11 +1371,13 @@ This implementation plan covers **58 discrete, actionable tasks** organized into
 - **End of Phase 10**: E2E demo fully functional
 - **End of Phase 11**: Azure deployment working
 - **End of Phase 13**: Production-ready and validated
+- **End of Phase 15**: QLoRA fine-tuning operational on consumer side
 
 **Dependencies**:
 - External Control Plane API must be available by Phase 11 (for production testing)
 - Azure subscription with GPU quota for Phase 11+
 - Azure Marketplace publisher account for Phase 14 (if publishing publicly)
+- GPU with sufficient VRAM for QLoRA training (Phase 15) - minimum 24GB recommended
 
 ---
 
@@ -1075,14 +1391,16 @@ This implementation plan covers **58 discrete, actionable tasks** organized into
 
 ### Implementation Guidance
 - **Control Plane**: The production Control Plane is **external**. Only implement the mock version in `e2e/controlplane-mock/` for testing.
-- **Follow Section 10**: The implementation order in Section 10 covers all 58 required tasks. Use it as a checklist.
+- **Follow Section 10**: The implementation order in Section 10 covers all 76 required tasks across 15 phases. Use it as a checklist.
 - **Test as you go**: Each phase has an acceptance criterion. Do not proceed to the next phase until the current phase passes.
 - **E2E first**: The E2E demo (Section 11, Phase 10) is the primary validation. Prioritize making it work before Azure deployment.
+- **Fine-tuning (Phase 15)**: QLoRA fine-tuning is an optional feature that can be implemented after core functionality is stable. Ensure Phases 1-13 are complete before starting Phase 15.
 - **Security invariants**: Never compromise on the core security requirements:
   - No plaintext weights on persistent disk
   - Runtime must never be externally accessible
   - Decryption keys must never be logged
   - SAS URLs must not be logged in production
+  - Training worker must not have direct access to decrypted weights (Phase 15)
 
 ### File Organization
 - Repository layout is defined in Section 2. Create directories as needed following this structure.
