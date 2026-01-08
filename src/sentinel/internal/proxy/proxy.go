@@ -21,15 +21,21 @@ type ProxyConfig struct {
 	AssetID    string // Asset ID for audit logging
 }
 
+// BillingMiddleware defines the interface for billing metrics collection middleware.
+type BillingMiddleware interface {
+	Wrap(next http.Handler) http.Handler
+}
+
 // Server is the reverse proxy HTTP server.
 type Server struct {
-	machine     *state.Machine
-	config      *ProxyConfig
-	httpServer  *http.Server
-	auditLogger AuditLogger
-	logger      *slog.Logger
-	mu          sync.Mutex
-	started     bool
+	machine           *state.Machine
+	config            *ProxyConfig
+	httpServer        *http.Server
+	auditLogger       AuditLogger
+	billingMiddleware BillingMiddleware
+	logger            *slog.Logger
+	mu                sync.Mutex
+	started           bool
 }
 
 // ServerOption is a functional option for configuring the Server.
@@ -46,6 +52,13 @@ func WithLogger(logger *slog.Logger) ServerOption {
 func WithAuditLogger(logger AuditLogger) ServerOption {
 	return func(s *Server) {
 		s.auditLogger = logger
+	}
+}
+
+// WithBillingMiddleware sets the billing metrics middleware.
+func WithBillingMiddleware(middleware BillingMiddleware) ServerOption {
+	return func(s *Server) {
+		s.billingMiddleware = middleware
 	}
 }
 
@@ -102,10 +115,13 @@ func (s *Server) Start() error {
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 	}
 
-	// Build handler chain: state check -> audit -> proxy
-	handler := s.stateCheckMiddleware(
-		AuditMiddleware(s.auditLogger, s.config.ContractID, s.config.AssetID)(proxy),
-	)
+	// Build handler chain: state check -> billing -> audit -> proxy
+	var handler http.Handler = proxy
+	handler = AuditMiddleware(s.auditLogger, s.config.ContractID, s.config.AssetID)(handler)
+	if s.billingMiddleware != nil {
+		handler = s.billingMiddleware.Wrap(handler)
+	}
+	handler = s.stateCheckMiddleware(handler)
 
 	s.httpServer = &http.Server{
 		Addr:         s.config.PublicAddr,

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"trustbridge/sentinel/internal/asset"
+	"trustbridge/sentinel/internal/billing"
 	"trustbridge/sentinel/internal/config"
 	"trustbridge/sentinel/internal/crypto"
 	"trustbridge/sentinel/internal/health"
@@ -181,7 +182,28 @@ func run(logger *slog.Logger) error {
 		"fifo_path", cfg.PipePath,
 	)
 
+	// Create billing components if enabled
+	var billingCounter *billing.Counter
+	var billingAgent *billing.Agent
+	var billingMiddleware *billing.Middleware
+
+	if cfg.BillingEnabled {
+		billingCounter = billing.NewCounter()
+		billingMiddleware = billing.NewMiddleware(billingCounter)
+		logger.Info("Billing enabled",
+			"interval", cfg.BillingInterval.String(),
+			"dimension", cfg.BillingDimension,
+		)
+	}
+
 	// Start proxy server
+	proxyOpts := []proxy.ServerOption{
+		proxy.WithLogger(logger),
+	}
+	if billingMiddleware != nil {
+		proxyOpts = append(proxyOpts, proxy.WithBillingMiddleware(billingMiddleware))
+	}
+
 	proxyServer := proxy.NewServer(
 		stateMachine,
 		&proxy.ProxyConfig{
@@ -190,7 +212,7 @@ func run(logger *slog.Logger) error {
 			ContractID: cfg.ContractID,
 			AssetID:    cfg.AssetID,
 		},
-		proxy.WithLogger(logger),
+		proxyOpts...,
 	)
 	if err := proxyServer.Start(); err != nil {
 		stateMachine.Suspend(fmt.Sprintf("proxy start failed: %v", err))
@@ -205,6 +227,60 @@ func run(logger *slog.Logger) error {
 		defer shutdownCancel()
 		proxyServer.Stop(shutdownCtx)
 	}()
+
+	// Start billing agent if enabled
+	if cfg.BillingEnabled && billingCounter != nil {
+		var reporter billing.MeterReporter
+
+		// Use real metering client for production, log reporter for testing
+		if cfg.MeteringEndpoint == config.DefaultMeteringEndpoint {
+			reporter = billing.NewMeteringClient(billing.MeteringConfig{
+				Endpoint:   cfg.MeteringEndpoint,
+				ResourceID: cfg.BillingResourceID,
+				PlanID:     cfg.BillingPlanID,
+				Dimension:  cfg.BillingDimension,
+			}, billing.WithMeteringLogger(&sentinelLogger{logger: logger}))
+		} else {
+			// Non-default endpoint means testing mode - use log reporter
+			reporter = billing.NewLogReporter(&sentinelLogger{logger: logger})
+			logger.Info("Using stub billing reporter for testing",
+				"metering_endpoint", cfg.MeteringEndpoint,
+			)
+		}
+
+		billingAgent = billing.NewAgent(
+			billingCounter,
+			reporter,
+			stateMachine.Suspend,
+			billing.WithConfig(billing.AgentConfig{
+				Interval:   cfg.BillingInterval,
+				ContractID: cfg.ContractID,
+				AssetID:    cfg.AssetID,
+				ResourceID: cfg.BillingResourceID,
+				Dimension:  cfg.BillingDimension,
+			}),
+			billing.WithLogger(&sentinelLogger{logger: logger}),
+		)
+
+		if err := billingAgent.Start(); err != nil {
+			logger.Error("Failed to start billing agent", "error", err.Error())
+		} else {
+			logger.Info("Billing agent started",
+				"interval", cfg.BillingInterval.String(),
+				"resource_id", cfg.BillingResourceID,
+			)
+		}
+
+		defer func() {
+			if billingAgent != nil && billingAgent.IsRunning() {
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer shutdownCancel()
+				if err := billingAgent.Stop(shutdownCtx); err != nil {
+					logger.Error("Failed to stop billing agent", "error", err.Error())
+				}
+			}
+		}()
+	}
 
 	// Wait for either:
 	// 1. Context cancellation (shutdown signal)

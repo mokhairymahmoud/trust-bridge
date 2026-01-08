@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Default values for optional configuration
@@ -28,8 +29,13 @@ const (
 	// Validation limits
 	MinDownloadConcurrency = 1
 	MaxDownloadConcurrency = 32
-	MinDownloadChunkBytes  = 1024           // 1KB
+	MinDownloadChunkBytes  = 1024             // 1KB
 	MaxDownloadChunkBytes  = 64 * 1024 * 1024 // 64MB
+
+	// Billing defaults
+	DefaultBillingInterval  = 60 * time.Second
+	DefaultBillingDimension = "requests"
+	DefaultMeteringEndpoint = "https://marketplaceapi.microsoft.com"
 )
 
 // Valid log levels
@@ -63,6 +69,14 @@ type Config struct {
 
 	// Logging
 	LogLevel string // TB_LOG_LEVEL - Logging level (debug, info, warn, error)
+
+	// Billing configuration
+	BillingEnabled    bool          // TB_BILLING_ENABLED - Enable billing agent
+	BillingInterval   time.Duration // TB_BILLING_INTERVAL - Report interval (default: 60s)
+	BillingDimension  string        // TB_BILLING_DIMENSION - Metering dimension
+	BillingResourceID string        // TB_BILLING_RESOURCE_ID - Azure resource ID
+	BillingPlanID     string        // TB_BILLING_PLAN_ID - Marketplace plan ID
+	MeteringEndpoint  string        // TB_METERING_ENDPOINT - API endpoint (for testing)
 }
 
 // ValidationError represents a configuration validation failure.
@@ -134,6 +148,22 @@ func Load() (*Config, error) {
 		})
 	}
 	cfg.DownloadChunkBytes = chunkBytes
+
+	// Parse billing configuration
+	cfg.BillingEnabled = getEnvBool("TB_BILLING_ENABLED", false)
+	cfg.BillingDimension = getEnv("TB_BILLING_DIMENSION", DefaultBillingDimension)
+	cfg.BillingResourceID = os.Getenv("TB_BILLING_RESOURCE_ID")
+	cfg.BillingPlanID = os.Getenv("TB_BILLING_PLAN_ID")
+	cfg.MeteringEndpoint = getEnv("TB_METERING_ENDPOINT", DefaultMeteringEndpoint)
+
+	billingInterval, err := getEnvDuration("TB_BILLING_INTERVAL", DefaultBillingInterval)
+	if err != nil {
+		parseErrs = append(parseErrs, &ValidationError{
+			Field:   "TB_BILLING_INTERVAL",
+			Message: err.Error(),
+		})
+	}
+	cfg.BillingInterval = billingInterval
 
 	// Validate all fields
 	validationErrs := cfg.Validate()
@@ -233,6 +263,36 @@ func (c *Config) Validate() []error {
 		})
 	}
 
+	// Billing validation (only if enabled)
+	if c.BillingEnabled {
+		if c.BillingResourceID == "" {
+			errs = append(errs, &ValidationError{
+				Field:   "TB_BILLING_RESOURCE_ID",
+				Message: "required when billing is enabled",
+			})
+		}
+		if c.BillingPlanID == "" {
+			errs = append(errs, &ValidationError{
+				Field:   "TB_BILLING_PLAN_ID",
+				Message: "required when billing is enabled",
+			})
+		}
+		if c.BillingInterval < time.Second {
+			errs = append(errs, &ValidationError{
+				Field:   "TB_BILLING_INTERVAL",
+				Message: fmt.Sprintf("must be at least 1 second, got %v", c.BillingInterval),
+			})
+		}
+		if c.MeteringEndpoint != "" {
+			if err := validateURL(c.MeteringEndpoint); err != nil {
+				errs = append(errs, &ValidationError{
+					Field:   "TB_METERING_ENDPOINT",
+					Message: err.Error(),
+				})
+			}
+		}
+	}
+
 	return errs
 }
 
@@ -240,7 +300,7 @@ func (c *Config) Validate() []error {
 // Sensitive values are redacted.
 func (c *Config) String() string {
 	return fmt.Sprintf(
-		"Config{ContractID=%q, AssetID=%q, EDCEndpoint=%q, TargetDir=%q, PipePath=%q, ReadySignal=%q, RuntimeURL=%q, PublicAddr=%q, HealthAddr=%q, DownloadConcurrency=%d, DownloadChunkBytes=%d, LogLevel=%q}",
+		"Config{ContractID=%q, AssetID=%q, EDCEndpoint=%q, TargetDir=%q, PipePath=%q, ReadySignal=%q, RuntimeURL=%q, PublicAddr=%q, HealthAddr=%q, DownloadConcurrency=%d, DownloadChunkBytes=%d, LogLevel=%q, BillingEnabled=%t, BillingInterval=%v, BillingDimension=%q}",
 		c.ContractID,
 		c.AssetID,
 		c.EDCEndpoint,
@@ -253,6 +313,9 @@ func (c *Config) String() string {
 		c.DownloadConcurrency,
 		c.DownloadChunkBytes,
 		c.LogLevel,
+		c.BillingEnabled,
+		c.BillingInterval,
+		c.BillingDimension,
 	)
 }
 
@@ -295,4 +358,37 @@ func validateURL(rawURL string) error {
 	}
 
 	return nil
+}
+
+// getEnvBool returns the environment variable value as a boolean or a default if not set.
+func getEnvBool(key string, defaultValue bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+
+	// Accept common boolean representations
+	switch strings.ToLower(value) {
+	case "true", "1", "yes", "on":
+		return true
+	case "false", "0", "no", "off":
+		return false
+	default:
+		return defaultValue
+	}
+}
+
+// getEnvDuration returns the environment variable value as a duration or a default if not set.
+func getEnvDuration(key string, defaultValue time.Duration) (time.Duration, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue, nil
+	}
+
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return defaultValue, fmt.Errorf("invalid duration: %q", value)
+	}
+
+	return duration, nil
 }
