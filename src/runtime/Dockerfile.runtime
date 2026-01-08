@@ -1,0 +1,44 @@
+# TrustBridge Runtime Container
+# Base image with vLLM for GPU inference
+#
+# This container waits for the sentinel to signal that decrypted weights
+# are available via FIFO, then starts the vLLM inference server.
+
+FROM vllm/vllm-openai:v0.6.0
+
+# Labels
+LABEL org.opencontainers.image.title="TrustBridge Runtime"
+LABEL org.opencontainers.image.description="Inference runtime for TrustBridge secure model serving"
+LABEL org.opencontainers.image.vendor="TrustBridge"
+
+# Install curl for healthcheck (if not already present)
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy entrypoint script
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Environment defaults (matching sentinel config)
+ENV TB_READY_SIGNAL=/dev/shm/weights/ready.signal
+ENV TB_PIPE_PATH=/dev/shm/model-pipe
+ENV TB_RUNTIME_HOST=127.0.0.1
+ENV TB_RUNTIME_PORT=8081
+ENV TB_STARTUP_TIMEOUT=300
+ENV TB_MAX_LORAS=4
+ENV TB_MAX_LORA_RANK=64
+
+# Health check - vLLM exposes OpenAI-compatible API
+# Start period allows time for model loading
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -f http://127.0.0.1:8081/health || exit 1
+
+# Run as non-root user for security
+USER vllm
+
+# Working directory
+WORKDIR /app
+
+# Entrypoint waits for ready signal then starts vLLM
+ENTRYPOINT ["/app/entrypoint.sh"]

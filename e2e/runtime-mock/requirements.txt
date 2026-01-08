@@ -1,0 +1,4 @@
+# TrustBridge Runtime Mock Dependencies
+# For E2E testing - simulates runtime behavior
+
+flask>=2.3.0
