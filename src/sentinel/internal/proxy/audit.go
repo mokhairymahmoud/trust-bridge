@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"sync"
@@ -162,6 +163,40 @@ func (l *NopAuditLogger) Log(entry *AuditEntry) error {
 
 // Close is a no-op.
 func (l *NopAuditLogger) Close() error {
+	return nil
+}
+
+// SlogAuditLogger logs audit entries to slog (structured logging to stdout).
+// This is the default logger for production use.
+type SlogAuditLogger struct {
+	logger *slog.Logger
+}
+
+// NewSlogAuditLogger creates a new slog-based audit logger.
+func NewSlogAuditLogger(logger *slog.Logger) *SlogAuditLogger {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &SlogAuditLogger{logger: logger}
+}
+
+// Log writes the audit entry to slog.
+func (l *SlogAuditLogger) Log(entry *AuditEntry) error {
+	l.logger.Info("audit",
+		"ts", entry.Timestamp,
+		"contract_id", entry.ContractID,
+		"asset_id", entry.AssetID,
+		"method", entry.Method,
+		"path", entry.Path,
+		"req_sha256", entry.ReqSHA256,
+		"status", entry.Status,
+		"latency_ms", entry.LatencyMS,
+	)
+	return nil
+}
+
+// Close is a no-op for slog logger.
+func (l *SlogAuditLogger) Close() error {
 	return nil
 }
 

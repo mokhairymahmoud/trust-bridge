@@ -18,7 +18,7 @@ from .errors import (
     DockerError,
     NetworkError,
 )
-from .console import console, success, error, warning, info, progress
+from .console import console, success, error, warning, info, progress, display_key_warning, display_table
 from .retry import retry_with_backoff
 from .validation import (
     validate_asset_id,
@@ -44,6 +44,8 @@ __all__ = [
     "warning",
     "info",
     "progress",
+    "display_key_warning",
+    "display_table",
     # Retry
     "retry_with_backoff",
     # Validation

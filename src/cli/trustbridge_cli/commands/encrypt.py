@@ -54,21 +54,16 @@ def _do_encryption(
         CryptoError: If encryption fails
     """
     try:
-        # Ensure output directory exists
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Define output paths
-        encrypted_path = output_dir / "model.tbenc"
-        manifest_path = output_dir / "model.manifest.json"
-
-        # Perform encryption
-        key_hex, manifest_data = encrypt_and_generate_manifest(
+        # Perform encryption - the function handles directory creation
+        key_bytes, encrypted_path, manifest_path = encrypt_and_generate_manifest(
             input_path=input_path,
-            output_path=encrypted_path,
-            manifest_path=manifest_path,
+            output_dir=output_dir,
             asset_id=asset_id,
             chunk_bytes=chunk_bytes,
         )
+
+        # Convert key bytes to hex string
+        key_hex = key_bytes.hex()
 
         return key_hex, encrypted_path, manifest_path
 
@@ -165,7 +160,7 @@ def command(
         validate_disk_space(output_dir, input_size, safety_margin=1.3)
 
         # Display encryption parameters
-        console.console.print()
+        console.print()
         display_table(
             "Encryption Parameters",
             [
@@ -176,7 +171,7 @@ def command(
                 ("Output Directory", str(output_dir)),
             ],
         )
-        console.console.print()
+        console.print()
 
         # Perform encryption
         with progress(f"Encrypting {input_file.name}..."):
@@ -189,7 +184,7 @@ def command(
 
         # Display results
         encrypted_size = encrypted_path.stat().st_size
-        console.console.print()
+        console.print()
         display_table(
             "Encryption Results",
             [
@@ -203,11 +198,11 @@ def command(
         display_key_warning(key_hex)
 
         success(f"Encryption completed successfully!")
-        console.console.print()
+        console.print()
         info("Next steps:")
-        console.console.print("  1. Save the decryption key in a secure location")
-        console.console.print("  2. Upload encrypted assets: trustbridge upload ...")
-        console.console.print("  3. Register with Control Plane: trustbridge register ...")
+        console.print("  1. Save the decryption key in a secure location")
+        console.print("  2. Upload encrypted assets: trustbridge upload ...")
+        console.print("  3. Register with Control Plane: trustbridge register ...")
 
     except TrustBridgeError as e:
         error(e.message, details=e.details)

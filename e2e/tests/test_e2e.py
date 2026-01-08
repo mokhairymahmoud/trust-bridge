@@ -38,6 +38,7 @@ from conftest import (
     wait_for_health,
     get_container_logs,
     exec_in_container,
+    stop_main_services_if_running,
     SENTINEL_URL,
     SENTINEL_HEALTH_URL,
     BLOB_SERVER_URL,
@@ -212,6 +213,7 @@ class TestE2EHappyPath:
         print("Audit log verification passed")
 
 
+@pytest.mark.isolated
 class TestAuthorizationDeny:
     """
     Tests for contract denial scenarios.
@@ -220,11 +222,16 @@ class TestAuthorizationDeny:
     - Not reach Ready state
     - Not expose the proxy port
     - Return appropriate error responses
+    
+    Note: This test runs after main tests with fresh Docker containers.
     """
 
     @pytest.fixture(scope="class")
     def denied_services(self, e2e_env: dict):
         """Start services with a denied contract."""
+        # Stop main services if they're still running (shouldn't be, but just in case)
+        stop_main_services_if_running()
+        
         # Override contract ID to trigger denial
         env = e2e_env.copy()
         env["TB_CONTRACT_ID"] = "contract-deny"
@@ -275,12 +282,15 @@ class TestAuthorizationDeny:
         print("Authorization deny verified - sentinel blocked access")
 
 
+@pytest.mark.isolated
 class TestDownloadIntegrity:
     """
     Tests for download integrity verification.
 
     The sentinel must verify SHA256 hash of downloaded ciphertext
     against the manifest before proceeding to decryption.
+    
+    Note: This test runs after main tests with fresh Docker containers.
     """
 
     def test_download_integrity_failure(self, e2e_env: dict):
@@ -294,6 +304,9 @@ class TestDownloadIntegrity:
 
         Section 9.2 / 11.6B: If ciphertext is modified, sentinel must fail
         """
+        # Stop main services if they're still running
+        stop_main_services_if_running()
+        
         # This is a destructive test - we need to corrupt the artifact
         # Skip if artifacts don't exist
         tbenc_file = ARTIFACTS_DIR / "model.tbenc"

@@ -199,6 +199,7 @@ func run(logger *slog.Logger) error {
 	// Start proxy server
 	proxyOpts := []proxy.ServerOption{
 		proxy.WithLogger(logger),
+		proxy.WithAuditLogger(proxy.NewSlogAuditLogger(logger)),
 	}
 	if billingMiddleware != nil {
 		proxyOpts = append(proxyOpts, proxy.WithBillingMiddleware(billingMiddleware))

@@ -17,6 +17,36 @@ from typing import Generator
 import pytest
 import requests
 
+
+# Register pytest markers
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "isolated: marks tests that require exclusive port access (these run after main tests)"
+    )
+
+
+def pytest_collection_modifyitems(session, config, items):
+    """
+    Reorder tests so that isolated tests run last.
+    
+    This ensures:
+    1. Main tests run first with shared Docker containers
+    2. Isolated tests run after main containers are torn down
+    """
+    # Separate isolated and non-isolated tests
+    isolated_tests = []
+    main_tests = []
+    
+    for item in items:
+        if item.get_closest_marker('isolated'):
+            isolated_tests.append(item)
+        else:
+            main_tests.append(item)
+    
+    # Reorder: main tests first, then isolated tests
+    items[:] = main_tests + isolated_tests
+
+
 # Directory containing docker-compose.yml
 E2E_DIR = Path(__file__).parent.parent
 COMPOSE_FILE = E2E_DIR / "docker-compose.yml"
@@ -55,12 +85,13 @@ def wait_for_health(url: str, timeout: int = 120, interval: float = 2.0) -> bool
     return False
 
 
-def docker_compose_up(env: dict | None = None) -> bool:
+def docker_compose_up(env: dict | None = None, project_name: str | None = None) -> bool:
     """
     Start docker compose services.
 
     Args:
         env: Additional environment variables
+        project_name: Optional project name for isolation (default: "e2e")
 
     Returns:
         True if successful
@@ -69,8 +100,9 @@ def docker_compose_up(env: dict | None = None) -> bool:
     if env:
         cmd_env.update(env)
 
+    project = project_name or "e2e"
     result = subprocess.run(
-        ["docker", "compose", "-f", str(COMPOSE_FILE), "up", "--build", "-d"],
+        ["docker", "compose", "-f", str(COMPOSE_FILE), "-p", project, "up", "--build", "-d"],
         cwd=str(E2E_DIR),
         env=cmd_env,
         capture_output=True,
@@ -83,15 +115,19 @@ def docker_compose_up(env: dict | None = None) -> bool:
     return True
 
 
-def docker_compose_down() -> bool:
+def docker_compose_down(project_name: str | None = None) -> bool:
     """
     Stop and remove docker compose services.
+
+    Args:
+        project_name: Optional project name for isolation (default: "e2e")
 
     Returns:
         True if successful
     """
+    project = project_name or "e2e"
     result = subprocess.run(
-        ["docker", "compose", "-f", str(COMPOSE_FILE), "down", "-v"],
+        ["docker", "compose", "-f", str(COMPOSE_FILE), "-p", project, "down", "-v"],
         cwd=str(E2E_DIR),
         capture_output=True,
         text=True,
@@ -99,10 +135,11 @@ def docker_compose_down() -> bool:
     return result.returncode == 0
 
 
-def get_container_logs(service_name: str) -> str:
+def get_container_logs(service_name: str, project_name: str | None = None) -> str:
     """Get logs from a specific service container."""
+    project = project_name or "e2e"
     result = subprocess.run(
-        ["docker", "compose", "-f", str(COMPOSE_FILE), "logs", service_name],
+        ["docker", "compose", "-f", str(COMPOSE_FILE), "-p", project, "logs", service_name],
         cwd=str(E2E_DIR),
         capture_output=True,
         text=True,
@@ -110,15 +147,16 @@ def get_container_logs(service_name: str) -> str:
     return result.stdout
 
 
-def exec_in_container(service_name: str, command: list[str]) -> tuple[int, str, str]:
+def exec_in_container(service_name: str, command: list[str], project_name: str | None = None) -> tuple[int, str, str]:
     """
     Execute a command in a running container.
 
     Returns:
         Tuple of (return_code, stdout, stderr)
     """
+    project = project_name or "e2e"
     result = subprocess.run(
-        ["docker", "compose", "-f", str(COMPOSE_FILE), "exec", "-T", service_name] + command,
+        ["docker", "compose", "-f", str(COMPOSE_FILE), "-p", project, "exec", "-T", service_name] + command,
         cwd=str(E2E_DIR),
         capture_output=True,
         text=True,
@@ -168,7 +206,11 @@ def plaintext_sha256() -> str | None:
     return None
 
 
-@pytest.fixture(scope="module")
+# Track if main services are running (for isolated tests to know)
+_main_services_running = False
+
+
+@pytest.fixture(scope="session")
 def e2e_services(e2e_env: dict) -> Generator[dict, None, None]:
     """
     Start E2E services and wait for them to be healthy.
@@ -182,8 +224,10 @@ def e2e_services(e2e_env: dict) -> Generator[dict, None, None]:
     Yields:
         Dictionary with service URLs
     """
+    global _main_services_running
     # Start services
     assert docker_compose_up(e2e_env), "Failed to start docker compose"
+    _main_services_running = True
 
     try:
         # Wait for infrastructure services first
@@ -211,6 +255,20 @@ def e2e_services(e2e_env: dict) -> Generator[dict, None, None]:
         # Always tear down
         print("Stopping E2E services...")
         docker_compose_down()
+        _main_services_running = False
+
+
+def stop_main_services_if_running():
+    """
+    Stop main E2E services if they are running.
+    
+    This is called by isolated tests before they start their own Docker containers.
+    """
+    global _main_services_running
+    if _main_services_running:
+        print("Stopping main E2E services for isolated test...")
+        docker_compose_down()
+        _main_services_running = False
 
 
 @pytest.fixture

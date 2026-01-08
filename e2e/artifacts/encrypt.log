@@ -1,0 +1,4 @@
+ℹ Validating inputs...
+✗ Unexpected error during encryption
+  Details: 'Console' object has no 
+attribute 'console'
