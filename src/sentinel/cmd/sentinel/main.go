@@ -26,6 +26,7 @@ import (
 	"trustbridge/sentinel/internal/crypto"
 	"trustbridge/sentinel/internal/health"
 	"trustbridge/sentinel/internal/license"
+	"trustbridge/sentinel/internal/proxy"
 	"trustbridge/sentinel/internal/state"
 )
 
@@ -179,6 +180,31 @@ func run(logger *slog.Logger) error {
 		"health_endpoint", fmt.Sprintf("http://%s/health", cfg.HealthAddr),
 		"fifo_path", cfg.PipePath,
 	)
+
+	// Start proxy server
+	proxyServer := proxy.NewServer(
+		stateMachine,
+		&proxy.ProxyConfig{
+			PublicAddr: cfg.PublicAddr,
+			RuntimeURL: cfg.RuntimeURL,
+			ContractID: cfg.ContractID,
+			AssetID:    cfg.AssetID,
+		},
+		proxy.WithLogger(logger),
+	)
+	if err := proxyServer.Start(); err != nil {
+		stateMachine.Suspend(fmt.Sprintf("proxy start failed: %v", err))
+		return fmt.Errorf("failed to start proxy: %w", err)
+	}
+	logger.Info("Proxy server started",
+		"addr", cfg.PublicAddr,
+		"runtime", cfg.RuntimeURL,
+	)
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		proxyServer.Stop(shutdownCtx)
+	}()
 
 	// Wait for either:
 	// 1. Context cancellation (shutdown signal)
