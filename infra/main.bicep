@@ -75,17 +75,8 @@ var dnsLabelPrefix = '${namePrefix}-${uniqueString(resourceGroup().id)}'
 // Cloud-init script content (base64 encoded in customData)
 var cloudInitScript = loadTextContent('cloud-init/init.sh')
 
-// Environment variables for cloud-init substitution
-var cloudInitEnv = '''
-export TB_CONTRACT_ID="${contractId}"
-export TB_ASSET_ID="${assetId}"
-export TB_EDC_ENDPOINT="${edcEndpoint}"
-export SENTINEL_IMAGE="${sentinelImage}"
-export RUNTIME_IMAGE="${runtimeImage}"
-export ACR_NAME="${acrName}"
-export TB_BILLING_ENABLED="${billingEnabled}"
-export TB_LOG_LEVEL="${logLevel}"
-'''
+// Environment variables for cloud-init - uses string concatenation for proper interpolation
+var cloudInitEnv = 'export TB_CONTRACT_ID="${contractId}"\nexport TB_ASSET_ID="${assetId}"\nexport TB_EDC_ENDPOINT="${edcEndpoint}"\nexport SENTINEL_IMAGE="${sentinelImage}"\nexport RUNTIME_IMAGE="${runtimeImage}"\nexport ACR_NAME="${acrName}"\nexport TB_BILLING_ENABLED="${string(billingEnabled)}"\nexport TB_LOG_LEVEL="${logLevel}"\n'
 
 // Combined cloud-init with environment setup
 var fullCloudInit = '#!/bin/bash\n${cloudInitEnv}\n${cloudInitScript}'

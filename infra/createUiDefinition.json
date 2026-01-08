@@ -1,0 +1,316 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/0.1.2-preview/CreateUIDefinition.MultiVm.json#",
+  "handler": "Microsoft.Azure.CreateUIDef",
+  "version": "0.1.2-preview",
+  "parameters": {
+    "config": {
+      "isWizard": true,
+      "basics": {
+        "description": "Deploy TrustBridge secure inference platform with encrypted model protection.",
+        "subscription": {
+          "constraints": {
+            "validations": [
+              {
+                "permission": "Microsoft.Compute/virtualMachines/write",
+                "message": "Must have permission to create virtual machines."
+              }
+            ]
+          },
+          "resourceProviders": [
+            "Microsoft.Compute",
+            "Microsoft.Network",
+            "Microsoft.ContainerRegistry"
+          ]
+        },
+        "resourceGroup": {
+          "allowExisting": true
+        },
+        "location": {
+          "visible": true,
+          "resourceTypes": [
+            "Microsoft.Compute/virtualMachines"
+          ]
+        }
+      }
+    },
+    "basics": [
+      {
+        "name": "vmName",
+        "type": "Microsoft.Common.TextBox",
+        "label": "VM Name Prefix",
+        "toolTip": "Prefix for all deployed resources (VM, NSG, VNet, etc.)",
+        "defaultValue": "trustbridge",
+        "constraints": {
+          "required": true,
+          "regex": "^[a-z0-9-]{3,20}$",
+          "validationMessage": "Must be 3-20 lowercase letters, numbers, or hyphens."
+        }
+      },
+      {
+        "name": "contractId",
+        "type": "Microsoft.Common.TextBox",
+        "label": "Contract ID",
+        "toolTip": "Your TrustBridge contract identifier provided by the model provider.",
+        "placeholder": "contract-xxxxxxxx",
+        "constraints": {
+          "required": true,
+          "regex": "^[a-zA-Z0-9-]{4,64}$",
+          "validationMessage": "Contract ID must be 4-64 alphanumeric characters or hyphens."
+        }
+      }
+    ],
+    "steps": [
+      {
+        "name": "vmSettings",
+        "label": "VM Settings",
+        "bladeTitle": "Virtual Machine Configuration",
+        "elements": [
+          {
+            "name": "vmSize",
+            "type": "Microsoft.Compute.SizeSelector",
+            "label": "GPU VM Size",
+            "toolTip": "Select a GPU VM size appropriate for your model size.",
+            "recommendedSizes": [
+              "Standard_NC24ads_A100_v4",
+              "Standard_NC6s_v3",
+              "Standard_ND96asr_v4"
+            ],
+            "constraints": {
+              "allowedSizes": [
+                "Standard_NC6s_v3",
+                "Standard_NC12s_v3",
+                "Standard_NC24s_v3",
+                "Standard_NC24ads_A100_v4",
+                "Standard_NC48ads_A100_v4",
+                "Standard_NC96ads_A100_v4",
+                "Standard_ND96asr_v4",
+                "Standard_ND96amsr_A100_v4"
+              ]
+            },
+            "options": {
+              "hideDiskTypeFilter": true
+            },
+            "osPlatform": "Linux",
+            "imageReference": {
+              "publisher": "Canonical",
+              "offer": "0001-com-ubuntu-server-jammy",
+              "sku": "22_04-lts-gen2"
+            },
+            "count": 1,
+            "visible": true
+          },
+          {
+            "name": "adminUsername",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Admin Username",
+            "toolTip": "SSH username for VM administration.",
+            "defaultValue": "azureuser",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-z][a-z0-9_-]{1,31}$",
+              "validationMessage": "Must start with a letter and be 2-32 lowercase alphanumeric characters."
+            }
+          },
+          {
+            "name": "adminSshKey",
+            "type": "Microsoft.Common.TextBox",
+            "label": "SSH Public Key",
+            "toolTip": "SSH public key for secure VM access. Generate with 'ssh-keygen -t rsa -b 4096'.",
+            "placeholder": "ssh-rsa AAAA...",
+            "multiLine": true,
+            "constraints": {
+              "required": true,
+              "regex": "^ssh-rsa AAAA[0-9A-Za-z+/]+[=]{0,3}( [^@]+@[^@]+)?$",
+              "validationMessage": "Must be a valid SSH RSA public key."
+            }
+          }
+        ]
+      },
+      {
+        "name": "networkSettings",
+        "label": "Network Settings",
+        "bladeTitle": "Network Configuration",
+        "elements": [
+          {
+            "name": "enablePublicIp",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "Enable Public IP",
+            "toolTip": "Enable public IP for direct internet access to the inference endpoint.",
+            "defaultValue": true
+          },
+          {
+            "name": "sshAllowedSourceAddresses",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Allowed SSH Source IPs",
+            "toolTip": "CIDR notation for IP addresses allowed to SSH (e.g., '10.0.0.0/8' or '*' for any).",
+            "defaultValue": "*",
+            "constraints": {
+              "required": true,
+              "regex": "^(\\*|([0-9]{1,3}\\.){3}[0-9]{1,3}(\\/[0-9]{1,2})?)$",
+              "validationMessage": "Must be '*' or a valid CIDR notation (e.g., 10.0.0.0/8)."
+            }
+          },
+          {
+            "name": "networkInfo",
+            "type": "Microsoft.Common.InfoBox",
+            "visible": true,
+            "options": {
+              "icon": "Info",
+              "text": "The runtime port (8081) is always blocked from external access. Only the Sentinel API (8000) and health endpoint (8001) are exposed.",
+              "style": "Info"
+            }
+          }
+        ]
+      },
+      {
+        "name": "containerSettings",
+        "label": "Container Settings",
+        "bladeTitle": "Container Image Configuration",
+        "elements": [
+          {
+            "name": "sentinelImage",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Sentinel Container Image",
+            "toolTip": "Full container image reference for the TrustBridge Sentinel (e.g., myacr.azurecr.io/sentinel:latest).",
+            "placeholder": "myacr.azurecr.io/trustbridge-sentinel:latest",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-z0-9][a-z0-9.-]*(\\/[a-z0-9._-]+)+(:[a-zA-Z0-9._-]+)?(@sha256:[a-f0-9]{64})?$",
+              "validationMessage": "Must be a valid container image reference."
+            }
+          },
+          {
+            "name": "runtimeImage",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Runtime Container Image",
+            "toolTip": "Full container image reference for the inference runtime (e.g., myacr.azurecr.io/runtime:latest).",
+            "placeholder": "myacr.azurecr.io/trustbridge-runtime:latest",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-z0-9][a-z0-9.-]*(\\/[a-z0-9._-]+)+(:[a-zA-Z0-9._-]+)?(@sha256:[a-f0-9]{64})?$",
+              "validationMessage": "Must be a valid container image reference."
+            }
+          },
+          {
+            "name": "acrName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Azure Container Registry Name",
+            "toolTip": "Name of the ACR containing the container images. Leave empty if using public images.",
+            "placeholder": "myacr",
+            "constraints": {
+              "required": false,
+              "regex": "^([a-z0-9]{5,50})?$",
+              "validationMessage": "Must be a valid ACR name (5-50 lowercase alphanumeric) or empty."
+            }
+          }
+        ]
+      },
+      {
+        "name": "trustbridgeSettings",
+        "label": "TrustBridge Settings",
+        "bladeTitle": "TrustBridge Configuration",
+        "elements": [
+          {
+            "name": "assetId",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Asset ID",
+            "toolTip": "TrustBridge asset identifier (provided by model provider).",
+            "placeholder": "tb-asset-xxxxx",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-zA-Z0-9-]{4,64}$",
+              "validationMessage": "Asset ID must be 4-64 alphanumeric characters or hyphens."
+            }
+          },
+          {
+            "name": "edcEndpoint",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Control Plane Endpoint",
+            "toolTip": "URL of the TrustBridge Control Plane / EDC endpoint.",
+            "placeholder": "https://controlplane.trustbridge.io",
+            "constraints": {
+              "required": true,
+              "regex": "^https?:\\/\\/[a-zA-Z0-9][a-zA-Z0-9.-]+(:[0-9]+)?(\\/.*)?$",
+              "validationMessage": "Must be a valid HTTP/HTTPS URL."
+            }
+          },
+          {
+            "name": "billingEnabled",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "Enable Azure Marketplace Billing",
+            "toolTip": "Enable usage metering to Azure Marketplace for billing.",
+            "defaultValue": true
+          },
+          {
+            "name": "logLevel",
+            "type": "Microsoft.Common.DropDown",
+            "label": "Log Level",
+            "toolTip": "Logging verbosity for the Sentinel service.",
+            "defaultValue": "info",
+            "constraints": {
+              "required": true,
+              "allowedValues": [
+                { "label": "Debug", "value": "debug" },
+                { "label": "Info", "value": "info" },
+                { "label": "Warning", "value": "warn" },
+                { "label": "Error", "value": "error" }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "summary",
+        "label": "Summary",
+        "bladeTitle": "Deployment Summary",
+        "elements": [
+          {
+            "name": "summaryInfo",
+            "type": "Microsoft.Common.Section",
+            "label": "Configuration Summary",
+            "elements": [
+              {
+                "name": "summaryText",
+                "type": "Microsoft.Common.TextBlock",
+                "visible": true,
+                "options": {
+                  "text": "Review your TrustBridge deployment configuration before creating resources.",
+                  "link": {
+                    "label": "Learn more about TrustBridge",
+                    "uri": "https://docs.trustbridge.io"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "securityWarning",
+            "type": "Microsoft.Common.InfoBox",
+            "visible": true,
+            "options": {
+              "icon": "Warning",
+              "text": "The runtime port (8081) will be blocked from external access. Model weights are never stored unencrypted on disk.",
+              "style": "Warning"
+            }
+          }
+        ]
+      }
+    ],
+    "outputs": {
+      "namePrefix": "[basics('vmName')]",
+      "contractId": "[basics('contractId')]",
+      "vmSize": "[steps('vmSettings').vmSize]",
+      "adminUsername": "[steps('vmSettings').adminUsername]",
+      "adminSshKey": "[steps('vmSettings').adminSshKey]",
+      "enablePublicIp": "[steps('networkSettings').enablePublicIp]",
+      "sshAllowedSourceAddresses": "[steps('networkSettings').sshAllowedSourceAddresses]",
+      "sentinelImage": "[steps('containerSettings').sentinelImage]",
+      "runtimeImage": "[steps('containerSettings').runtimeImage]",
+      "acrName": "[steps('containerSettings').acrName]",
+      "assetId": "[steps('trustbridgeSettings').assetId]",
+      "edcEndpoint": "[steps('trustbridgeSettings').edcEndpoint]",
+      "billingEnabled": "[steps('trustbridgeSettings').billingEnabled]",
+      "logLevel": "[steps('trustbridgeSettings').logLevel]"
+    }
+  }
+}
