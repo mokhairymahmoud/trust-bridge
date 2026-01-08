@@ -1,0 +1,132 @@
+version: "3.8"
+
+# TrustBridge E2E Test Environment
+#
+# Services:
+#   - blob-server: HTTP file server with Range support (port 9000)
+#   - controlplane: Mock Control Plane authorization API (port 8080)
+#   - sentinel: TrustBridge Sentinel (port 8000)
+#   - runtime-mock: Mock inference runtime (shares localhost with sentinel)
+#
+# Usage:
+#   docker compose up --build -d
+#   curl http://localhost:8000/health
+#   docker compose down -v
+#
+# Note on networking:
+#   runtime-mock uses network_mode: "service:sentinel" to share the network
+#   namespace, making it accessible via 127.0.0.1:8081 from sentinel.
+#   Both containers mount the same shared-shm volume for FIFO communication.
+
+services:
+  # Blob server - serves encrypted artifacts
+  blob-server:
+    build: ./blob-server
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./artifacts:/data:ro
+    environment:
+      - BLOB_PORT=9000
+      - BLOB_DATA_DIR=/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - e2e-network
+
+  # Control Plane mock - authorization API
+  controlplane:
+    build: ./controlplane-mock
+    ports:
+      - "8080:8080"
+    environment:
+      - CP_PORT=8080
+      - E2E_DECRYPTION_KEY=${E2E_DECRYPTION_KEY:-}
+      - E2E_BLOB_SERVER=http://blob-server:9000
+      - E2E_EXPIRY_SECONDS=3600
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - e2e-network
+    depends_on:
+      blob-server:
+        condition: service_healthy
+
+  # Sentinel - TrustBridge security sidecar
+  sentinel:
+    build: ../src/sentinel
+    ports:
+      - "8000:8000"   # Public API
+      - "8001:8001"   # Health endpoint
+    environment:
+      - TB_CONTRACT_ID=${TB_CONTRACT_ID:-contract-allow}
+      - TB_ASSET_ID=${TB_ASSET_ID:-tb-asset-e2e-001}
+      - TB_EDC_ENDPOINT=http://controlplane:8080
+      - TB_TARGET_DIR=/mnt/resource/trustbridge
+      - TB_PIPE_PATH=/shared-shm/model-pipe
+      - TB_READY_SIGNAL=/shared-shm/weights/ready.signal
+      - TB_RUNTIME_URL=http://127.0.0.1:8081
+      - TB_PUBLIC_ADDR=0.0.0.0:8000
+      - TB_HEALTH_ADDR=0.0.0.0:8001
+      - TB_DOWNLOAD_CONCURRENCY=4
+      - TB_LOG_LEVEL=info
+      - TB_BILLING_ENABLED=false
+    volumes:
+      # Ephemeral storage for encrypted downloads
+      - sentinel-cache:/mnt/resource/trustbridge
+      # Shared volume for FIFO and signals (shared with runtime-mock)
+      - shared-shm:/shared-shm
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s  # Allow time for hydration
+    networks:
+      - e2e-network
+    depends_on:
+      controlplane:
+        condition: service_healthy
+      blob-server:
+        condition: service_healthy
+
+  # Runtime mock - shares network namespace with sentinel
+  # This ensures runtime is on localhost:8081 from sentinel's perspective
+  runtime-mock:
+    build: ./runtime-mock
+    # Share network namespace with sentinel - runtime accessible via 127.0.0.1:8081
+    network_mode: "service:sentinel"
+    environment:
+      - TB_PIPE_PATH=/shared-shm/model-pipe
+      - TB_READY_SIGNAL=/shared-shm/weights/ready.signal
+      - TB_RUNTIME_HOST=127.0.0.1
+      - TB_RUNTIME_PORT=8081
+    # Share the same volume as sentinel for FIFO communication
+    volumes:
+      - shared-shm:/shared-shm
+    depends_on:
+      - sentinel
+
+networks:
+  e2e-network:
+    driver: bridge
+
+volumes:
+  sentinel-cache:
+    driver: local
+  # Shared volume for FIFO communication between sentinel and runtime-mock
+  # Using tmpfs driver for in-memory storage (no disk persistence)
+  shared-shm:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=536870912  # 512MB
