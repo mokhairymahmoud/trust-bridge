@@ -3,7 +3,7 @@
   "algo": "aes-256-gcm-chunked",
   "chunk_bytes": 4194304,
   "plaintext_bytes": 16777216,
-  "sha256_ciphertext": "fddfae29da901073d2583743d272f74eb6506604a02f2d0e82270c54d79937e1",
+  "sha256_ciphertext": "7c42d60fcfafc3df4801bc0e0c57c878734da11de905a70313088dd2d1d4ac0f",
   "asset_id": "tb-asset-e2e-001",
   "weights_filename": "model.tbenc"
 }

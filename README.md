@@ -4,86 +4,184 @@ TrustBridge is a secure platform for distributing large AI model weights with en
 
 ## Project Status
 
-**Current Phase:** Phase 1 Complete ✅
+**Current Phase:** Phase 11 Complete ✅ (Core Platform Functional)
 
 Implementation follows the detailed specification in [`implementation.md`](./implementation.md).
 
-### Phase 1: Crypto Foundation ✅ COMPLETE
+### Completed Phases (1-11)
 
-Cryptographic interoperability between provider (Python) and consumer (Go) is fully implemented and validated.
+| Phase | Description | Status |
+|-------|-------------|--------|
+| **1** | Crypto Foundation | ✅ Complete |
+| **2** | Provider CLI - Core Commands | ✅ Complete |
+| **3** | Sentinel - Authorization & Fingerprinting | ✅ Complete |
+| **4** | Sentinel - Asset Hydration | ✅ Complete |
+| **5** | Sentinel - Decryption & Ready Signal | ✅ Complete |
+| **6** | Sentinel - State Machine & Health | ✅ Complete |
+| **7** | Sentinel - Proxy & Audit | ✅ Complete |
+| **8** | Sentinel - Billing & Suspend Logic | ✅ Complete |
+| **9** | Runtime Integration | ✅ Complete |
+| **10** | E2E Infrastructure | ✅ Complete |
+| **11** | Infrastructure Packaging | ✅ Complete |
 
-- ✅ Python `tbenc/v1` encryption
-- ✅ Go `tbenc/v1` decryption
-- ✅ Cross-language interoperability validation
-- ✅ Multiple chunk sizes tested (1KB, 1MB, 4MB, 16MB)
-- ✅ Edge cases coverage (empty files, single byte, non-aligned chunks)
+### What's Working
 
-See [`PHASE1_STATUS.md`](./PHASE1_STATUS.md) for detailed completion report.
+- **Provider Side**: Complete workflow - encrypt → upload → register → build → package → publish
+- **Consumer Side**: Full sentinel lifecycle - authorize → hydrate → decrypt → proxy → audit
+- **E2E Testing**: Automated test suite with Docker Compose
+- **Azure Deployment**: Managed App templates with GPU VM provisioning
+
+### Remaining Phases (12-15)
+
+- **Phase 12**: Production Hardening (SAS retry optimization, mTLS)
+- **Phase 13**: Acceptance Testing
+- **Phase 14**: Documentation & Handoff
+- **Phase 15**: QLoRA Fine-Tuning (optional feature)
 
 ## Repository Structure
 
 ```
 .
-├── implementation.md           # Complete implementation specification
-├── PHASE1_STATUS.md           # Phase 1 completion report
-├── README.md                  # This file
+├── implementation.md              # Complete implementation specification
+├── README.md                      # This file
 │
 ├── src/
-│   ├── cli/                   # Provider CLI (Python)
+│   ├── cli/                       # Provider CLI (Python 3.10+)
 │   │   ├── trustbridge_cli/
-│   │   │   ├── crypto_tbenc.py      # tbenc/v1 encryption
-│   │   │   └── __init__.py
+│   │   │   ├── main.py            # Typer CLI entry point
+│   │   │   ├── crypto_tbenc.py    # tbenc/v1 encryption
+│   │   │   ├── commands/          # CLI command implementations
+│   │   │   │   ├── encrypt.py     # Encrypt model weights
+│   │   │   │   ├── blob.py        # Upload to Azure Blob
+│   │   │   │   ├── edc.py         # Register with Control Plane
+│   │   │   │   ├── build.py       # Build Docker images
+│   │   │   │   ├── package.py     # Generate Managed App package
+│   │   │   │   └── publish.py     # Full workflow orchestration
+│   │   │   └── common/            # Shared utilities
 │   │   ├── requirements.txt
-│   │   └── test_crypto_tbenc.py     # Unit tests
+│   │   └── tests/                 # Unit tests
 │   │
-│   ├── sentinel/              # Consumer sentinel (Go)
+│   ├── sentinel/                  # Consumer sentinel (Go 1.21+)
 │   │   ├── go.mod
-│   │   ├── cmd/
-│   │   │   └── decrypt-test/        # CLI test utility
-│   │   │       └── main.go
+│   │   ├── cmd/sentinel/          # Main sentinel binary
 │   │   └── internal/
-│   │       └── crypto/
-│   │           ├── decrypt.go       # tbenc/v1 decryption
-│   │           └── decrypt_test.go  # Unit tests
+│   │       ├── config/            # Configuration management
+│   │       ├── license/           # Authorization & fingerprinting
+│   │       ├── asset/             # Download & integrity verification
+│   │       ├── crypto/            # tbenc/v1 decryption, FIFO
+│   │       ├── state/             # State machine orchestration
+│   │       ├── health/            # Health check endpoints
+│   │       ├── proxy/             # Reverse proxy & audit logging
+│   │       └── billing/           # Usage metering & billing
 │   │
-│   └── runtime/               # (To be implemented)
+│   └── runtime/                   # Runtime wrapper
+│       └── entrypoint.sh          # FIFO-based model loading
 │
-├── scripts/
-│   ├── test-crypto-interop.sh       # Cross-language validation
-│   └── test-chunk-sizes.sh          # Chunk size validation
+├── e2e/                           # E2E testing infrastructure
+│   ├── docker-compose.yml         # Full test environment
+│   ├── Makefile                   # Test automation
+│   ├── data/                      # Test data generation
+│   ├── artifacts/                 # Encrypted test files
+│   ├── blob-server/               # HTTP file server (Range support)
+│   ├── controlplane-mock/         # Mock authorization API
+│   ├── runtime-mock/              # Mock inference server
+│   └── tests/                     # Automated pytest suite
 │
-├── e2e/                       # (To be implemented)
-├── infra/                     # (To be implemented)
-└── docs/                      # (To be implemented)
+├── infra/                         # Azure infrastructure
+│   ├── main.bicep                 # Managed App deployment
+│   ├── createUiDefinition.json    # Azure Portal UI
+│   ├── cloud-init/                # VM bootstrap scripts
+│   └── scripts/                   # Deployment utilities
+│
+├── scripts/                       # Development scripts
+│   ├── test-crypto-interop.sh     # Cross-language validation
+│   └── test-chunk-sizes.sh        # Chunk size validation
+│
+└── docs/                          # Documentation
+    ├── workflow.md                # End-to-end workflow guide
+    └── kserve-kvcache-analysis.md # KServe & KV Cache integration analysis
 ```
 
 ## Quick Start
 
-### Testing Crypto Implementation
+### Run Full E2E Demo (Recommended)
 
-1. **Run Python encryption tests:**
+The easiest way to verify the entire system works:
+
 ```bash
+# Navigate to e2e directory
+cd e2e
+
+# Run the full E2E workflow
+make e2e
+```
+
+This will:
+1. Generate test plaintext weights
+2. Encrypt weights using the provider CLI
+3. Start all services (blob server, control plane mock, sentinel, runtime mock)
+4. Run automated tests validating the complete workflow
+5. Clean up when done
+
+### Provider Workflow (Manual)
+
+```bash
+# 1. Install provider CLI
 cd src/cli
-python3 -m venv venv
-source venv/bin/activate
+pip install -r requirements.txt
+
+# 2. Encrypt model weights
+trustbridge encrypt \
+  --asset-id my-model-001 \
+  --in /path/to/model.safetensors \
+  --out model.tbenc \
+  --manifest model.manifest.json
+
+# 3. Upload to Azure Blob Storage
+trustbridge upload \
+  --storage-account myaccount \
+  --container models \
+  --asset-id my-model-001 \
+  --encrypted-file model.tbenc \
+  --manifest model.manifest.json
+
+# 4. Register with Control Plane
+trustbridge register \
+  --edc-endpoint https://controlplane.example.com \
+  --asset-id my-model-001 \
+  --manifest model.manifest.json \
+  --key-hex <decryption-key>
+
+# 5. Build and push Docker image
+trustbridge build \
+  --registry myacr.azurecr.io \
+  --image-name trustbridge-runtime \
+  --tag v1.0.0
+
+# 6. Generate Managed App package
+trustbridge package \
+  --asset-id my-model-001 \
+  --image myacr.azurecr.io/trustbridge-runtime:v1.0.0 \
+  --output-zip managed-app.zip
+
+# OR run all steps at once:
+trustbridge publish --all-steps ...
+```
+
+### Development Testing
+
+```bash
+# Run Python unit tests
+cd src/cli
 pip install -r requirements.txt pytest
-python -m pytest test_crypto_tbenc.py -v
-```
+python -m pytest tests/ -v
 
-2. **Run Go decryption tests:**
-```bash
+# Run Go unit tests
 cd src/sentinel
-go test -v ./internal/crypto/
-```
+go test -v ./...
 
-3. **Run cross-language interop test:**
-```bash
+# Run cross-language interop test
 bash scripts/test-crypto-interop.sh
-```
-
-4. **Run chunk size validation:**
-```bash
-bash scripts/test-chunk-sizes.sh
 ```
 
 ## tbenc/v1 Format
@@ -144,38 +242,57 @@ Ambassador Sidecar architecture:
 
 Based on `implementation.md` Section 10:
 
-- [x] **Phase 1:** Crypto Foundation (Days 1-3) ✅
-- [ ] **Phase 2:** Provider CLI - Core Commands (Days 4-7)
-- [ ] **Phase 3:** Sentinel - Authorization & Fingerprinting (Days 8-10)
-- [ ] **Phase 4:** Sentinel - Asset Hydration (Days 11-14)
-- [ ] **Phase 5:** Sentinel - Decryption & Ready Signal (Days 15-17)
-- [ ] **Phase 6:** Sentinel - State Machine & Health (Days 18-20)
-- [ ] **Phase 7:** Sentinel - Proxy & Audit (Days 21-23)
-- [ ] **Phase 8:** Sentinel - Billing & Suspend Logic (Days 24-25)
-- [ ] **Phase 9:** Runtime Integration (Days 26-27)
-- [ ] **Phase 10:** E2E Infrastructure (Days 28-32)
-- [ ] **Phase 11:** Infrastructure Packaging (Days 33-36)
-- [ ] **Phase 12:** Production Hardening (Days 37-40)
-- [ ] **Phase 13:** Acceptance Testing (Days 41-42)
-- [ ] **Phase 14:** Documentation & Handoff (Days 43-45)
+- [x] **Phase 1:** Crypto Foundation ✅
+- [x] **Phase 2:** Provider CLI - Core Commands ✅
+- [x] **Phase 3:** Sentinel - Authorization & Fingerprinting ✅
+- [x] **Phase 4:** Sentinel - Asset Hydration ✅
+- [x] **Phase 5:** Sentinel - Decryption & Ready Signal ✅
+- [x] **Phase 6:** Sentinel - State Machine & Health ✅
+- [x] **Phase 7:** Sentinel - Proxy & Audit ✅
+- [x] **Phase 8:** Sentinel - Billing & Suspend Logic ✅
+- [x] **Phase 9:** Runtime Integration ✅
+- [x] **Phase 10:** E2E Infrastructure ✅
+- [x] **Phase 11:** Infrastructure Packaging ✅
+- [ ] **Phase 12:** Production Hardening
+- [ ] **Phase 13:** Acceptance Testing
+- [ ] **Phase 14:** Documentation & Handoff
+- [ ] **Phase 15:** QLoRA Fine-Tuning (optional)
 
 ## Testing
 
-### Current Test Coverage
+### Test Suites
 
-- **Python:** 8 test cases, 100% function coverage
-- **Go:** 11 test cases + 1 benchmark, comprehensive coverage
-- **Cross-language:** End-to-end interoperability validated
-- **Chunk sizes:** 1KB, 1MB, 4MB, 16MB validated
-- **Edge cases:** Empty files, single chunk, multiple chunks, wrong key
+| Suite | Description | Status |
+|-------|-------------|--------|
+| **Python Unit Tests** | Encryption, key generation, manifest | ✅ Passing |
+| **Go Unit Tests** | Decryption, download, state machine, proxy | ✅ Passing |
+| **Cross-language Interop** | Python encrypt → Go decrypt | ✅ Passing |
+| **E2E Integration** | Full workflow validation | ✅ Passing |
 
-### Test Results
+### E2E Test Coverage
 
-All tests passing:
-- Python: 8/8 ✅
-- Go: 11/11 ✅
-- Interop: Hash match verified ✅
-- Chunk sizes: 4/4 ✅
+The automated E2E test suite (`e2e/tests/test_e2e.py`) validates:
+
+- **Authorization Gating**: Contract denial blocks access
+- **Download Integrity**: SHA256 hash verification
+- **Decrypt Interop**: Cross-language encryption/decryption
+- **No Plaintext on Disk**: Security validation
+- **Proxy Forwarding**: Request routing to runtime
+- **Audit Logging**: Audit trail generation
+- **Runtime Isolation**: Port accessibility restrictions
+
+### Running Tests
+
+```bash
+# Full E2E test suite
+cd e2e && make e2e
+
+# Python unit tests only
+cd src/cli && python -m pytest tests/ -v
+
+# Go unit tests only
+cd src/sentinel && go test -v ./...
+```
 
 ## License
 

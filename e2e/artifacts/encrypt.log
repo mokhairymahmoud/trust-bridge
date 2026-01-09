@@ -1,4 +1,32 @@
 ℹ Validating inputs...
-✗ Unexpected error during encryption
-  Details: 'Console' object has no 
-attribute 'console'
+
+                                             Encryption Parameters                                             
+┌──────────────────┬──────────────────────────────────────────────────────────────────────────────────────────┐
+│ Input File       │ /Users/mohamedkhairy/dev/trust-bridge/trust-bridge-claude-code-V2/e2e/data/plain.weights │
+│ File Size        │ 16.00 MB                                                                                 │
+│ Asset ID         │ tb-asset-e2e-001                                                                         │
+│ Chunk Size       │ 4 MB                                                                                     │
+│ Output Directory │ /Users/mohamedkhairy/dev/trust-bridge/trust-bridge-claude-code-V2/e2e/artifacts          │
+└──────────────────┴──────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+                                                   Encryption Results                                                   
+┌────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Encrypted File │ /Users/mohamedkhairy/dev/trust-bridge/trust-bridge-claude-code-V2/e2e/artifacts/model.tbenc         │
+│ Encrypted Size │ 16.00 MB                                                                                            │
+│ Manifest       │ /Users/mohamedkhairy/dev/trust-bridge/trust-bridge-claude-code-V2/e2e/artifacts/model.manifest.json │
+└────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+╭────────────────────────────────────────────────────────── ⚠️  DECRYPTION KEY - SAVE THIS! ───────────────────────────────────────────────────────────╮
+│ 282124c4962c8885cf5ad814a1339bd7ccc254b8e7e810e550a77ac903bc9fd9                                                                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+This key is required for decryption. Store it securely!
+✓ Encryption completed successfully!
+
+ℹ Next steps:
+  1. Save the decryption key in a secure location
+  2. Upload encrypted assets: trustbridge upload ...
+  3. Register with Control Plane: trustbridge register ...

@@ -1,0 +1,8 @@
+# ignore all test cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# .env files
+.env
